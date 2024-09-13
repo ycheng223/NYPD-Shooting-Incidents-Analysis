@@ -1,0 +1,221 @@
+---
+title: "NYPD Shooting Report"
+date: "2024-05-22"
+output: html_document
+---
+```{r}
+
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+The purpose of this report is to analyze, summarize and visualize the NYPD Shooting Incident dataset which reports and categorizes all shooting  incidents that occurred in NYC from between 2006 - 2023. To begin we will load all packages required for data management and visualization.
+
+```{r packages}
+library(ggplot2)
+library(data.table)
+library(scales)
+library(dplyr)
+library(lubridate)
+library(gganimate)
+library(RCurl)
+```
+
+
+Next we will read the data and store it into variable "dat". The dataset is in csv format.
+
+```{r read data}
+setwd("C://MSDS Program//Data Science as a Field//")
+dat = read.csv("NYPD_Shooting_Incident_Data__Historic__20240523.csv")
+```
+
+First let's look at how the frequency of shootings has changed over the years. We will first extract a list of all unique years in the dataset. we will then create a dataframe consisting of two columns; year and a count of the number of shooting incidents reported that year. We will then fill up this second column by sorting the dataset by year, iterating through the sorted dataset and updating the count when we detect the year has changed. Finally we will plot the number of occurrences by year as both a bar chart and a scatterplot.
+
+```{r Yearly visualization}
+
+date_split <- function(date){
+  y = strsplit(date, "/")[[1]][3]
+  return(y)
+}
+
+temp_dates = dat$OCCUR_DATE
+dat$year  = sapply(temp_dates, date_split)
+#head(dat$year)
+
+year_names = sort(unique(dat$year))
+year_incident_sorted = data.frame("year" = sort(dat$year))
+year_incident_sorted$index = 1:nrow(year_incident_sorted)
+year_count = data.frame("year" = year_names, "count" = matrix(0, nrow = length(unique(dat$year)), ncol = 1), row.names = year_names)
+
+count = 1
+k = 1
+year_incident_sorted$count = rep(1, nrow(year_incident_sorted))
+for(i in 2:nrow(year_incident_sorted)){
+  if(year_incident_sorted$year[i] != year_incident_sorted$year[i-1]){
+    year_count$count[k] = count
+    count = 0
+    k = k + 1
+  }
+  count = count + 1
+  year_incident_sorted$count[i] = count
+}
+year_count$count[nrow(year_count)] = count
+p1 = ggplot(data = year_count, aes(x = year, y = count)) + geom_bar(stat="identity", width = 0.4, fill = "steelblue") + theme_classic()
+p1 + coord_flip()
+p1a = ggplot(data = year_count, aes(x = year, y = count, group = 1)) + geom_line(color = "steelblue") + geom_point(color = "black")
+p1a
+```
+
+Looking at the visualizations (particularly the scatterplot), we can see that shooting occurrences has generally trended down from 2006 to 2019 before sharply spiking up between 2019 and 2021. Given the timeframe, I would wager this is most likely due to the pandemic. Shooting occurrences have since regressed back to the mean although not quite at the level from 2017-2019.
+
+Next, let's analyze the distribution of shooting incidents by borough.
+
+```{r Borough Visualization}
+
+boro_names = unique(dat$BORO)
+boro_count = data.frame("boro" = boro_names, "count" = 0)
+
+for(i in 1:nrow(boro_count)){
+  name = boro_count$boro[i]
+  boro_count$count[i] = length(which(dat$BORO == name))
+}
+p2 = ggplot(data = boro_count, aes(x = boro, y = count)) + 
+  geom_bar(stat = "identity", width = 0.5) + 
+  labs(title = "Shooting Count by Borough")
+p2
+```
+
+It seems that Brooklyn and the Bronx report a substantially greater number of shootings then the other boroughs. Manhattan and Queens both have a similar profile to one another and Staten Island is substantially lower then any other borough. On the other hand, Staten Island also has a substantially lower population then the other boroughs so perhaps a more accurate metric would be to measure shooting count per capita. Approximating from the 2022 Census:
+
+Bronx: 1,472,653
+Brooklyn: 2,736,119
+Manhattan: 1,694,250
+Queens: 2,405,425
+Staten Island: 495,752
+
+Dividing the individual borough shooting counts with their respective populations will then provide us with our shooting count per capita metric.
+
+```{R Borough Per Capita Visualization}
+
+pop = c(1694250, 1472653, 2405425, 2736119, 495752)
+boro_count$population = pop
+boro_count$count_per_capita = boro_count$count/boro_count$population
+p2a = ggplot(data = boro_count, aes(x = boro, y = count_per_capita)) + 
+  geom_bar(stat = "identity", width = 0.5) + 
+  labs(title = "Shooting Count Per Capita by Borough")
+p2a
+```
+
+This paints a slightly different picture. Adjusted for population, Staten Island now reports a similar profile to Manhattan and Queens while the Bronx overtakes Brooklyn in terms of shooting frequency. Both Brooklyn and the Bronx still report substantially higher rates of shooting incidents then other boroughs.
+
+Another interesting way to visualize the data is to create a visualization that animates how the per capita shooting count by borough changes over time. To do this we flatten all the borough variables in boro_count into a single categorical variable. We can then simply use the existing animation functions in ggplot to perform the animation using "year" as the transition variable.
+
+NOTE: In order for the animation to display properly, please ensure you have the [PNG](https://cran.r-project.org/web/packages/png/index.html) and [gifski](https://cran.r-project.org/web/packages/gifski/index.html) packages installed. These can be directly downloaded from CRAN using install.packages().
+
+```{R Borough Animation}
+#animated borough count by year to visualize relative changes in shootings by borough over the years
+boro_count_year = data.frame("year" = year_count$year, matrix(nrow = nrow(year_count), ncol = nrow(boro_count)))
+colnames(boro_count_year) = c("year", boro_count$boro)
+
+for(year in 1:nrow(year_count)){
+  for(boro in 1:nrow(boro_count)){
+    boro_count_year[year, boro + 1] = length(which(dat$year == year_names[year] & dat$BORO == boro_names[boro]))
+  }
+}
+boro_count_year_long = reshape2::melt(boro_count_year, id = "year", measure = boro_names)
+
+p3_anim = ggplot(boro_count_year_long, aes(x = variable, y = value, fill = variable)) + 
+  geom_bar(stat='identity') +
+  labs(title = 'Year: {closest_state}') +
+  theme_bw() +
+  transition_states(
+    year,
+    transition_length = 100,
+    state_length = 0.1
+  ) +
+  ease_aes('sine-in-out') +
+  scale_x_discrete(guide = guide_axis(angle = 30))
+
+animate(p3_anim, nframes = 100, end_pause = 10)
+```
+
+Now let's look at the distribution of times at which shootings typically occur.
+
+```{r Hourly Visualization}
+occur_times = data.frame(Occurence_Hour = format(strptime(dat$OCCUR_TIME, "%H:%M:%S"), "%H:00"))
+occur_times_count = plyr::count(occur_times)
+rm(occur_times)
+ggplot(occur_times_count, aes(x = Occurence_Hour, y = freq)) +  geom_point() + scale_x_discrete(guide = guide_axis(angle = 60))
+```
+
+It seems the frequency of shooting incidences rises either linearly or semi-exponentially as the hour approaches midnight before dropping off sharply after 4am. The time interval with the lowest number of shootings is between 7am and 9am which is typically the morning rush hour. One possible explanation for this could be that crime-related shootings typically do not occur during the morning because there are too many witnesses. Or that the incidence of shooting among people active during that time period (i.e. morning commuters/full time workers) is lower on average.
+
+Now lets look at the distribution of locations where shootings occur. To do this we will be bucketing the dataset based on location and counting the total number of incidents in each type of location.
+```{r Location Visualization}
+#unique(dat$LOC_OF_OCCUR_DESC)
+#unique(dat$LOC_CLASSFCTN_DESC)
+inside_outside_count = plyr::count(dat$LOC_OF_OCCUR_DESC)
+location_class_count = plyr::count(dat$LOC_CLASSFCTN_DESC)
+location_class_count = location_class_count[c(3:nrow(location_class_count)),]
+colnames(location_class_count) = c("Location", "Count")
+
+ggplot(location_class_count, aes(x= Location, y = Count, fill = Location)) +
+  geom_bar(stat="identity", width = 0.5) +
+  coord_flip() +
+  theme_light()
+```
+
+The vast majority of shootings occur either in the streets or at a residence (Housing + Dwelling) with a nontrivial proportion also occuring on commercial propeties. Perhaps this reflects how often these locations occur in the environment (i.e. when outside, one is almost always on a street in the city). It could also reflect the underlying distribution of why the shooting occured based on frequency of cause. For example if the majority of shootings were done with criminal intentions and criminal intentions are most likely to occur in the streets, then it would not be surprising that the majority of shooting incidents occur in the streets. It could also be that due to the probability of witnesses, shootings on the street are the type most likely to be reported.
+
+Now lets look at the fatality aspect of shootings and test whether there is correlation between location and whether a shooting is fatal or not:
+
+```{r Fatality Visualization}
+dat_fatal = filter(dat, dat$STATISTICAL_MURDER_FLAG == "true")
+dat_nonfatal = filter(dat, dat$STATISTICAL_MURDER_FLAG == "false")
+
+location_class_count_fatal = plyr::count(dat_fatal$LOC_CLASSFCTN_DESC)
+location_class_count_fatal = location_class_count_fatal[c(2:nrow(location_class_count_fatal)),]
+colnames(location_class_count_fatal) = c("Location", "Count")
+
+fatality_ratio = location_class_count_fatal$Count / location_class_count$Count
+location_class_count = data.frame(location_class_count, fatal_count = location_class_count_fatal$Count, fatality_ratio)
+
+ggplot(location_class_count, aes(x = Location, y = fatality_ratio, fill = Location)) + 
+  geom_bar(stat = "identity", width = 0.5) +
+  labs(title = "Shooting Fatality Rate by Location Type") +
+  coord_flip() +
+  theme_dark()
+```
+
+The highest fatality ratios are encountered in vehicles and one playgrounds. This is not surprisiing, it could be that shootings in vehicles are more likely to be fatal due to the close proximity at which the shooting occurs. Sadly, playgrounds most likely also experience a high fatality rate because kids are less likely to survive being shot.
+
+Digging deeper into this, lets finally look at the shootings as a function of age. What is the distribution of the shooter's age? Does this distribution change as we focus only on fatal shootings? In other words does the age of the shooter make it more or less likely for the shooting to be fatal?
+
+```{r Fatality by age}
+perp_age_count = data.frame(plyr::count(dat$PERP_AGE_GROUP))
+perp_age_count = perp_age_count[c(3,6, 8:10),]
+perp_age_count_fatal = data.frame(plyr::count(dat_fatal$PERP_AGE_GROUP))
+perp_age_count_fatal = perp_age_count_fatal[3:7,]
+colnames(perp_age_count) = colnames(perp_age_count_fatal) = c("Age_Group", "Count")
+perp_age_count_fatality_ratio = perp_age_count_fatal$Count/perp_age_count$Count
+perp_age_count = data.frame(perp_age_count, Fatal_Count = perp_age_count_fatal$Count, Ratio = perp_age_count_fatality_ratio)
+
+
+ggplot(perp_age_count, aes(x = Age_Group, y = Count, fill = Age_Group)) + 
+  geom_bar(stat = "identity", width = 0.5) + 
+  labs(title = "Shooting Frequency by Perpetrator Age") +
+  coord_flip() +
+  theme_dark()
+
+ggplot(perp_age_count, aes(x = Age_Group, y = Ratio, fill = Age_Group)) + 
+  geom_bar(stat = "identity", width = 0.5) + 
+  labs(title = "Shooting Fatality Ratio by Perpetrator Age") +
+  coord_flip() +
+  theme_dark()
+```
+
+These two visualizations together paint an interesting picture. While the perpetrators in the vast majority of shooting incidents are between the ages of 18 and 44 (i.e. the younger population), the chance the shooting being fatal rises dramatically when the perpetrator is 45 or older. Perhaps this reflects the differing intentions (on average) behind the shooting with the younger perpetrator more likely to commit to shooting due to criminal activity while the older perpetrator is more likely to commit the shooting due to intentions that are more likely to lead to murder. Without a far more detailed study that controls for various confounding variables however, this is merely hypothesis.
+
+In summary, shootings in NYC have tended to trend down over the years until the pandemic occured. Frequency peaked during 2020 but has since trended down although not quite reaching the level from 2017-2019. Shootings are more likely to occur in Brooklyn and the Bronx with Queens, Manhattan and Staten Island reporting a similar incidence profile when adjusted for population. Shootings are much more likely to occur late at night and exhibits monotonally increase behavior throughout the day to midnight. The time period that shootings are least likely to occur is between 7am and 9 am. Shootings are most likely to occur outside in the streets followed by at residences. Note that this pattern can change depending on underlying patterns such as criminal cause, witness likelihood and location frequency. Shootings are most likely to be fatal when they occur in a vehicle (see Shooting Fatality Rate by Location Type) or on a playground. Based on frequency of incidence, the shooter is most likely to be between 18 and 45. However if you are being shot at by someone older then 45, beware! Because it is much more likely to be fatal.
